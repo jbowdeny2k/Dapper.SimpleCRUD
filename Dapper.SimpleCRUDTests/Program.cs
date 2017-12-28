@@ -1,12 +1,15 @@
 ﻿using System;
 using System.Data.SqlClient;
-using System.Data.SQLite;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using MySql.Data.MySqlClient;
 using Npgsql;
+
+#if !NETSTANDARD
+using System.Data.SQLite;
 using Oracle.ManagedDataAccess.Client;
+#endif
 
 namespace Dapper.SimpleCRUDTests
 {
@@ -22,23 +25,24 @@ namespace Dapper.SimpleCRUDTests
             //SetupPg(); 
             //RunTestsPg();   
 
-            SetupSqLite();
-            RunTestsSqLite();
-
-            //MySQL tests assume port 3306 with username admin and password admin
-            //they are commented out by default since mysql setup is required to run tests
-            //SetupMySQL();
-            //RunTestsMySQL();
+#if !NETSTANDARD
+            //SetupSqLite();
+            //RunTestsSqLite();
 
             //Oracle tests do not assume username and password these will have to updated manaully
             //they are commented out by default since Oracle setup is required to run tests
             //SetupOracle();
             //RunTestsOracle();
+#endif
+            //MySQL tests assume port 3306 with username admin and password admin
+            //they are commented out by default since mysql setup is required to run tests
+            //SetupMySQL();
+            //RunTestsMySQL();
         }
 
         private static void Setup()
         {
-            using (var connection = new SqlConnection(@"Data Source=(LocalDB)\v11.0;Initial Catalog=Master;Integrated Security=True"))
+            using (var connection = new SqlConnection(@"Data Source=.\sqlexpress;Initial Catalog=Master;Integrated Security=True"))
             {
                 connection.Open();
                 try
@@ -51,7 +55,7 @@ namespace Dapper.SimpleCRUDTests
                 connection.Execute(@" CREATE DATABASE DapperSimpleCrudTestDb; ");
             }
 
-            using (var connection = new SqlConnection(@"Data Source = (LocalDB)\v11.0;Initial Catalog=DapperSimpleCrudTestDb;Integrated Security=True"))
+            using (var connection = new SqlConnection(@"Data Source = .\sqlexpress;Initial Catalog=DapperSimpleCrudTestDb;Integrated Security=True"))
             {
                 connection.Open();
                 connection.Execute(@" create table Users (Id int IDENTITY(1,1) not null, Name nvarchar(100) not null, Age int not null, ScheduledDayOff int null, CreatedDate datetime DEFAULT(getdate())) ");
@@ -65,6 +69,7 @@ namespace Dapper.SimpleCRUDTests
                 connection.Execute(@" create table UserWithoutAutoIdentity (Id int not null Primary Key, Name nvarchar(100) not null, Age int not null) ");
                 connection.Execute(@" create table IgnoreColumns (Id int IDENTITY(1,1) not null Primary Key, IgnoreInsert nvarchar(100) null, IgnoreUpdate nvarchar(100) null, IgnoreSelect nvarchar(100)  null, IgnoreAll nvarchar(100) null) ");
                 connection.Execute(@" CREATE TABLE GradingScale ([ScaleID] [int] IDENTITY(1,1) NOT NULL, [AppID] [int] NULL, [ScaleName] [nvarchar](50) NOT NULL, [IsDefault] [bit] NOT NULL)");
+                connection.Execute(@" CREATE TABLE KeyMaster ([Key1] [int] NOT NULL, [Key2] [int] NOT NULL, CONSTRAINT [PK_KeyMaster] PRIMARY KEY CLUSTERED ([Key1] ASC, [Key2] ASC))");
             }
             Console.WriteLine("Created database");
         }
@@ -98,11 +103,14 @@ namespace Dapper.SimpleCRUDTests
 
         }
 
+#if !NETSTANDARD
         private static void SetupSqLite()
         {
             File.Delete(Directory.GetCurrentDirectory() + "\\MyDatabase.sqlite");
+
             SQLiteConnection.CreateFile("MyDatabase.sqlite");
             var connection = new SQLiteConnection("Data Source=MyDatabase.sqlite;Version=3;");
+
             using (connection)
             {
                 connection.Open();
@@ -116,38 +124,14 @@ namespace Dapper.SimpleCRUDTests
                 connection.Execute(@" create table StrangeColumnNames (ItemId INTEGER PRIMARY KEY AUTOINCREMENT, word nvarchar(100) not null, colstringstrangeword nvarchar(100) not null, KeywordedProperty nvarchar(100) null) ");
                 connection.Execute(@" create table UserWithoutAutoIdentity (Id INTEGER PRIMARY KEY, Name nvarchar(100) not null, Age int not null) ");
                 connection.Execute(@" create table IgnoreColumns (Id INTEGER PRIMARY KEY AUTOINCREMENT, IgnoreInsert nvarchar(100) null, IgnoreUpdate nvarchar(100) null, IgnoreSelect nvarchar(100)  null, IgnoreAll nvarchar(100) null) ");
-            }
-        }
+                connection.Execute(@" CREATE TABLE KeyMaster (Key1 INTEGER NOT NULL, Key2 INTEGER NOT NULL, PRIMARY KEY ([Key1], [Key2]))");
 
-        private static void SetupMySQL()
-        {
-            using (var connection = new MySqlConnection(String.Format("Server={0};Port={1};User Id={2};Password={3};Database={4};", "localhost", "3306", "admin", "admin", "sys")))
-            {
-                connection.Open();
-                // drop  database 
-                connection.Execute("DROP DATABASE IF EXISTS testdb;");
-                connection.Execute("CREATE DATABASE testdb;");
             }
-            System.Threading.Thread.Sleep(1000);
-
-            using (var connection = new MySqlConnection(String.Format("Server={0};Port={1};User Id={2};Password={3};Database={4};", "localhost", "3306", "admin", "admin", "testdb")))
-            {
-                connection.Open();
-                connection.Execute(@" create table Users (Id INTEGER PRIMARY KEY AUTO_INCREMENT, Name nvarchar(100) not null, Age int not null, ScheduledDayOff int null, CreatedDate datetime default current_timestamp ) ");
-                connection.Execute(@" create table Car (CarId INTEGER PRIMARY KEY AUTO_INCREMENT, Id INTEGER null, Make nvarchar(100) not null, Model nvarchar(100) not null) ");
-                connection.Execute(@" create table BigCar (CarId BIGINT PRIMARY KEY AUTO_INCREMENT, Make nvarchar(100) not null, Model nvarchar(100) not null) ");
-                connection.Execute(@" insert into BigCar (CarId,Make,Model) Values (2147483649,'car','car') ");
-                connection.Execute(@" create table City (Name nvarchar(100) not null, Population int not null) ");
-                connection.Execute(@" CREATE TABLE GUIDTest(Id CHAR(38) NOT NULL,name varchar(50) NOT NULL, CONSTRAINT PK_GUIDTest PRIMARY KEY (Id ASC))");
-                connection.Execute(@" create table StrangeColumnNames (ItemId INTEGER PRIMARY KEY AUTO_INCREMENT, word nvarchar(100) not null, colstringstrangeword nvarchar(100) not null, KeywordedProperty nvarchar(100) null) ");
-                connection.Execute(@" create table UserWithoutAutoIdentity (Id INTEGER PRIMARY KEY, Name nvarchar(100) not null, Age int not null) ");
-            }
-
         }
 
         private static void SetupOracle()
         {
-            string connstr = String.Format("data source={0};password={1};user id={2}", "INSTANCE", "PASS12!", "USERNAME");
+            string connstr = String.Format("data source={0};password={1};user id={2}", "INSTANCE", "PASSWORD!", "USERNAME");
             using (var connection = new OracleConnection(connstr))
             {
                 connection.Open();
@@ -229,6 +213,11 @@ namespace Dapper.SimpleCRUDTests
                 }
                 catch (Exception)
                 { }
+                try
+                {
+                    connection.Execute(@"drop TABLE KeyMaster");
+                }
+                catch (Exception) { }
             }
             using (var connection = new OracleConnection(connstr))
             {
@@ -237,12 +226,12 @@ namespace Dapper.SimpleCRUDTests
                 connection.Execute(@"CREATE SEQUENCE Users_seq START WITH     1 INCREMENT BY   1 NOCACHE NOCYCLE");
                 connection.Execute(@"CREATE OR REPLACE TRIGGER USERS_INS_TRIG BEFORE INSERT ON Users FOR EACH ROW BEGIN IF :new.ID IS NULL THEN SELECT Users_seq.nextval INTO :new.ID FROM DUAL; END IF;  END;");
                 connection.Execute(@"CREATE TABLE Car (CarId number(10), Id number(10), Make NVARCHAR2(100) NOT NULL, Model NVARCHAR2(100) NOT NULL, CONSTRAINT CAR_PK PRIMARY KEY (CARId))");
-                connection.Execute(@"CREATE SEQUENCE Car_seq  START WITH     1 INCREMENT BY   1 NOCACHE NOCYCLE");
+                connection.Execute(@"CREATE SEQUENCE Car_seq  START WITH     2 INCREMENT BY   1 NOCACHE NOCYCLE");
                 connection.Execute(@"CREATE OR REPLACE TRIGGER CAR_INS_TRIG BEFORE INSERT ON CAR FOR EACH ROW BEGIN IF :new.CarId IS NULL THEN SELECT Car_seq.nextval INTO :new.CarId FROM DUAL;        END IF;  END;");
                 connection.Execute(@"CREATE TABLE BigCar (CarId number(10), Make NVARCHAR2(100) NOT NULL, Model NVARCHAR2(100) NOT NULL, CONSTRAINT BIGCAR_PK PRIMARY KEY (CARId))");
                 connection.Execute(@"CREATE SEQUENCE BigCar_seq  START WITH     2147483649 INCREMENT BY   1 NOCACHE NOCYCLE");
                 connection.Execute(@"CREATE OR REPLACE TRIGGER BIGCAR_INS_TRIG BEFORE INSERT ON BIGCAR FOR EACH ROW BEGIN IF :new.CarId IS NULL THEN SELECT BigCar_seq.nextval INTO :new.CarId FROM DUAL;        END IF;  END;");
-                connection.Execute(@"INSERT INTO BigCar (Make, Model) VALUES ('car', 'car')");
+                //connection.Execute(@"INSERT INTO BigCar (Make, Model) VALUES ('car', 'car')");
                 connection.Execute(@"CREATE TABLE City (NAME NVARCHAR2(100) NOT NULL, Population number(10) NOT NULL)");
                 connection.Execute(@"CREATE TABLE GUIDTest (Id char(38) default sys_guid(), NAME VARCHAR(50) NOT NULL, CONSTRAINT PK_GUIDTest PRIMARY KEY (Id))");
                 connection.Execute(@"CREATE TABLE StrangeColumnNames (ItemId NUMBER(10), word NVARCHAR2(100) NOT NULL, colstringstrangeword NVARCHAR2(100) NOT NULL, CONSTRAINT StrangeColumnNames_PK PRIMARY KEY (ItemId) )");
@@ -252,8 +241,35 @@ namespace Dapper.SimpleCRUDTests
                 connection.Execute(@"create table IgnoreColumns (Id number(10) not null Primary Key, IgnoreInsert nvarchar2(100), IgnoreUpdate nvarchar2(100), IgnoreSelect nvarchar2(100), IgnoreAll nvarchar2(100)) ");
                 connection.Execute(@"CREATE SEQUENCE IgnoreColumns_seq START WITH     1 INCREMENT BY   1 NOCACHE NOCYCLE");
                 connection.Execute(@"CREATE OR REPLACE TRIGGER IgnoreColumns_INS_TRIG BEFORE INSERT ON IgnoreColumns FOR EACH ROW BEGIN IF :new.ID IS NULL THEN SELECT IgnoreColumns_seq.nextval INTO :new.ID FROM DUAL; END IF;  END;");
-
+                connection.Execute(@"CREATE TABLE KeyMaster (Key1 INTEGER NOT NULL, Key2 INTEGER NOT NULL, PRIMARY KEY (Key1, Key2))");
             }
+        }
+
+#endif
+        private static void SetupMySQL()
+        {
+            using (var connection = new MySqlConnection(String.Format("Server={0};Port={1};User Id={2};Password={3};Database={4};", "localhost", "3306", "admin", "admin", "sys")))
+            {
+                connection.Open();
+                // drop  database 
+                connection.Execute("DROP DATABASE IF EXISTS testdb;");
+                connection.Execute("CREATE DATABASE testdb;");
+            }
+            System.Threading.Thread.Sleep(1000);
+
+            using (var connection = new MySqlConnection(String.Format("Server={0};Port={1};User Id={2};Password={3};Database={4};", "localhost", "3306", "admin", "admin", "testdb")))
+            {
+                connection.Open();
+                connection.Execute(@" create table Users (Id INTEGER PRIMARY KEY AUTO_INCREMENT, Name nvarchar(100) not null, Age int not null, ScheduledDayOff int null, CreatedDate datetime default current_timestamp ) ");
+                connection.Execute(@" create table Car (CarId INTEGER PRIMARY KEY AUTO_INCREMENT, Id INTEGER null, Make nvarchar(100) not null, Model nvarchar(100) not null) ");
+                connection.Execute(@" create table BigCar (CarId BIGINT PRIMARY KEY AUTO_INCREMENT, Make nvarchar(100) not null, Model nvarchar(100) not null) ");
+                connection.Execute(@" insert into BigCar (CarId,Make,Model) Values (2147483649,'car','car') ");
+                connection.Execute(@" create table City (Name nvarchar(100) not null, Population int not null) ");
+                connection.Execute(@" CREATE TABLE GUIDTest(Id CHAR(38) NOT NULL,name varchar(50) NOT NULL, CONSTRAINT PK_GUIDTest PRIMARY KEY (Id ASC))");
+                connection.Execute(@" create table StrangeColumnNames (ItemId INTEGER PRIMARY KEY AUTO_INCREMENT, word nvarchar(100) not null, colstringstrangeword nvarchar(100) not null, KeywordedProperty nvarchar(100) null) ");
+                connection.Execute(@" create table UserWithoutAutoIdentity (Id INTEGER PRIMARY KEY, Name nvarchar(100) not null, Age int not null) ");
+            }
+
         }
 
 
@@ -274,7 +290,7 @@ namespace Dapper.SimpleCRUDTests
             // Write result
             Console.WriteLine("Time elapsed: {0}", stopwatch.Elapsed);
 
-            using (var connection = new SqlConnection(@"Data Source=(LocalDB)\v11.0;Initial Catalog=Master;Integrated Security=True"))
+            using (var connection = new SqlConnection(@"Data Source=.\sqlexpress;Initial Catalog=Master;Integrated Security=True"))
             {
                 connection.Open();
                 try

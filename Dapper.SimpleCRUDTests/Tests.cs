@@ -1,25 +1,33 @@
 ﻿using System.ComponentModel;
 using System.Data;
 using System.Data.SqlClient;
-using System.Data.SQLite;
 using System.Diagnostics;
 using System.Linq;
 using System.Collections.Generic;
 using System;
 using MySql.Data.MySqlClient;
 using Npgsql;
+
+#if !NETSTANDARD
+using System.Data.SQLite;
 using Oracle.ManagedDataAccess.Client;
+#endif
 
 namespace Dapper.SimpleCRUDTests
 {
     #region DTOClasses
-    //For .Net 4.5> [System.ComponentModel.DataAnnotations.Schema.Table("Users")]  or the attribute built into SimpleCRUD
     [Table("Users")]
-    public class User
+    public class UserEditableSettings
     {
         public int Id { get; set; }
         public string Name { get; set; }
         public int Age { get; set; }
+    }
+
+    //For .Net 4.5> [System.ComponentModel.DataAnnotations.Schema.Table("Users")]  or the attribute built into SimpleCRUD
+    [Table("Users")]
+    public class User : UserEditableSettings
+    {
         //we modified so enums were automatically handled, we should also automatically handle nullable enums
         public DayOfWeek? ScheduledDayOff { get; set; }
 
@@ -142,6 +150,13 @@ namespace Dapper.SimpleCRUDTests
         public string Name { get; set; }
         public int Age { get; set; }
     }
+    public class KeyMaster
+    {
+        [Key, Required]
+        public int Key1 { get; set; }
+        [Key, Required]
+        public int Key2 { get; set; }
+    }
 
     #endregion
 
@@ -164,7 +179,11 @@ namespace Dapper.SimpleCRUDTests
             }
             else if (_dbtype == SimpleCRUD.Dialect.SQLite)
             {
+#if NETSTANDARD
+                throw new Exception(".NET Standard test library currently doesn't support sqllite. As of 11/20/2017, System.Data.SQLite doesn't support .net standard, and microsoft.data.sqlite doesn't handle guids well.");
+#else
                 connection = new SQLiteConnection("Data Source=MyDatabase.sqlite;Version=3;");
+#endif
                 SimpleCRUD.SetDialect(SimpleCRUD.Dialect.SQLite);
             }
             else if (_dbtype == SimpleCRUD.Dialect.MySQL)
@@ -174,12 +193,16 @@ namespace Dapper.SimpleCRUDTests
             }
             else if (_dbtype == SimpleCRUD.Dialect.Oracle)
             {
-                connection = new OracleConnection(String.Format("data source={0};password={1};user id={2}", "INSTANCE", "PASS12!", "USERNAME"));
+#if NETSTANDARD
+                throw new Exception(".NET Standard test library currently doesn't support Oracle. As of 12/28/2017, Oracle.ManagedDataAccess doesn't support .net standard");
+#else
+                connection = new OracleConnection(String.Format("data source={0};password={1};user id={2}", "INSTANCE", "PASSWORD!", "USERNAME"));
+#endif
                 SimpleCRUD.SetDialect(SimpleCRUD.Dialect.Oracle);
             }
             else
             {
-                connection = new SqlConnection(@"Data Source = (LocalDB)\v11.0;Initial Catalog=DapperSimpleCrudTestDb;Integrated Security=True;MultipleActiveResultSets=true;");
+                connection = new SqlConnection(@"Data Source = .\sqlexpress;Initial Catalog=DapperSimpleCrudTestDb;Integrated Security=True;MultipleActiveResultSets=true;");
                 SimpleCRUD.SetDialect(SimpleCRUD.Dialect.SQLServer);
             }
 
@@ -192,8 +215,9 @@ namespace Dapper.SimpleCRUDTests
         {
             using (var connection = GetOpenConnection())
             {
-                var id = connection.Insert(new User { Name = "User1", Age = 10 });
-                id.IsEqualTo(1);
+                var id = connection.Insert(new User { Name = "TestInsertWithSpecifiedTableName", Age = 10 });
+                var user = connection.Get<User>(id);
+                user.Name.IsEqualTo("TestInsertWithSpecifiedTableName");
                 connection.Delete<User>(id);
 
             }
@@ -203,10 +227,27 @@ namespace Dapper.SimpleCRUDTests
         {
             using (var connection = GetOpenConnection())
             {
-                var id = connection.Insert<long>(new BigCar { Make = "Big", Model = "Car" });
-                id.IsEqualTo(2147483650);
+                var id = connection.Insert<long, BigCar>(new BigCar { Make = "Big", Model = "Car" });
                 connection.Delete<BigCar>(id);
 
+            }
+        }
+
+        public void TestInsertUsingGenericLimitedFields()
+        {
+            using (var connection = GetOpenConnection())
+            {
+                //arrange
+                var user = new User { Name = "User1", Age = 10, ScheduledDayOff = DayOfWeek.Friday };
+
+                //act
+                var id = connection.Insert<int?, UserEditableSettings>(user);
+
+                //assert
+                var insertedUser = connection.Get<User>(id);
+                insertedUser.ScheduledDayOff.IsNull();
+
+                connection.Delete<User>(id);
             }
         }
 
@@ -270,6 +311,23 @@ namespace Dapper.SimpleCRUDTests
             }
         }
 
+
+        public void TestFilteredGetListWithMultipleKeys()
+        {
+            using (var connection = GetOpenConnection())
+            {
+                connection.Insert(new KeyMaster { Key1 = 1, Key2 = 1 });
+                connection.Insert(new KeyMaster { Key1 = 1, Key2 = 2 });
+                connection.Insert(new KeyMaster { Key1 = 1, Key2 = 3 });
+                connection.Insert(new KeyMaster { Key1 = 2, Key2 = 4 });
+
+                var keyMasters = connection.GetList<KeyMaster>(new { Key1 = 1 });
+                keyMasters.Count().IsEqualTo(3);
+                connection.Execute("Delete from KeyMaster");
+            }
+        }
+
+
         public void TestFilteredWithSQLGetList()
         {
             using (var connection = GetOpenConnection())
@@ -308,21 +366,21 @@ namespace Dapper.SimpleCRUDTests
         }
 
         public void TestsGetListWithParameters()
-       {
-           using (var connection = GetOpenConnection())
-           {
-               connection.Insert(new User { Name = "TestsGetListWithParameters1", Age = 10 });
-               connection.Insert(new User { Name = "TestsGetListWithParameters2", Age = 10 });
-               connection.Insert(new User { Name = "TestsGetListWithParameters3", Age = 10 });
-               connection.Insert(new User { Name = "TestsGetListWithParameters4", Age = 11 });
+        {
+            using (var connection = GetOpenConnection())
+            {
+                connection.Insert(new User { Name = "TestsGetListWithParameters1", Age = 10 });
+                connection.Insert(new User { Name = "TestsGetListWithParameters2", Age = 10 });
+                connection.Insert(new User { Name = "TestsGetListWithParameters3", Age = 10 });
+                connection.Insert(new User { Name = "TestsGetListWithParameters4", Age = 11 });
                 string whereclause = "where Age > @Age";
                 if (SimpleCRUD.GetDialect() == "Oracle")
                     whereclause = "where Age > :Age";
                 var user = connection.GetList<User>(whereclause, new { Age = 10 });
-               user.Count().IsEqualTo(1);
-               connection.Execute("Delete from Users");
-           }
-       }
+                user.Count().IsEqualTo(1);
+                connection.Execute("Delete from Users");
+            }
+        }
 
         public void TestGetWithReadonlyProperty()
         {
@@ -435,6 +493,34 @@ namespace Dapper.SimpleCRUDTests
             }
         }
 
+        /// <summary>
+        /// We expect scheduled day off to NOT be updated, since it's not a property of UserEditableSettings
+        /// </summary>
+        public void TestUpdateUsingGenericLimitedFields()
+        {
+            using (var connection = GetOpenConnection())
+            {
+                //arrange
+                var user = new User { Name = "User1", Age = 10, ScheduledDayOff = DayOfWeek.Friday };
+                user.Id = connection.Insert(user) ?? 0;
+
+                user.ScheduledDayOff = DayOfWeek.Thursday;
+                var userAsEditableSettings = (UserEditableSettings)user;
+                userAsEditableSettings.Name = "User++";
+
+                connection.Update(userAsEditableSettings);
+
+                //act
+                var insertedUser = connection.Get<User>(user.Id);
+
+                //assert
+                insertedUser.Name.IsEqualTo("User++");
+                insertedUser.ScheduledDayOff.IsEqualTo(DayOfWeek.Friday);
+
+                connection.Delete<User>(user.Id);
+            }
+        }
+
         public void TestDeleteByObjectWithAttributes()
         {
             using (var connection = GetOpenConnection())
@@ -443,6 +529,18 @@ namespace Dapper.SimpleCRUDTests
                 var car = connection.Get<Car>(id);
                 connection.Delete(car);
                 connection.Get<Car>(id).IsNull();
+            }
+        }
+
+        public void TestDeleteByMultipleKeyObjectWithAttributes()
+        {
+            using (var connection = GetOpenConnection())
+            {
+                var keyMaster = new KeyMaster { Key1 = 1, Key2 = 2 };
+                connection.Insert(keyMaster);
+                var car = connection.Get<KeyMaster>(new { Key1 = 1, Key2 = 2 });
+                connection.Delete(car);
+                connection.Get<KeyMaster>(keyMaster).IsNull();
             }
         }
 
@@ -568,7 +666,7 @@ namespace Dapper.SimpleCRUDTests
         {
             using (var connection = GetOpenConnection())
             {
-                var id = connection.Insert<Guid>(new GUIDTest { Name = "GuidUser" });
+                var id = connection.Insert<Guid, GUIDTest>(new GUIDTest { Name = "GuidUser" });
                 id.GetType().Name.IsEqualTo("Guid");
                 var record = connection.Get<GUIDTest>(id);
                 record.Name.IsEqualTo("GuidUser");
@@ -581,7 +679,7 @@ namespace Dapper.SimpleCRUDTests
             using (var connection = GetOpenConnection())
             {
                 var guid = new Guid("1a6fb33d-7141-47a0-b9fa-86a1a1945da9");
-                var id = connection.Insert<Guid>(new GUIDTest { Name = "InsertIntoTableWithGuidKey", Id = guid });
+                var id = connection.Insert<Guid, GUIDTest>(new GUIDTest { Name = "InsertIntoTableWithGuidKey", Id = guid });
                 id.IsEqualTo(guid);
                 connection.Delete<GUIDTest>(id);
             }
@@ -592,7 +690,7 @@ namespace Dapper.SimpleCRUDTests
             using (var connection = GetOpenConnection())
             {
                 var guid = new Guid("2a6fb33d-7141-47a0-b9fa-86a1a1945da9");
-                connection.Insert<Guid>(new GUIDTest { Name = "GetRecordWithGuidKey", Id = guid });
+                connection.Insert<Guid, GUIDTest>(new GUIDTest { Name = "GetRecordWithGuidKey", Id = guid });
                 var id = connection.GetList<GUIDTest>().First().Id;
                 var record = connection.Get<GUIDTest>(id);
                 record.Name.IsEqualTo("GetRecordWithGuidKey");
@@ -606,13 +704,14 @@ namespace Dapper.SimpleCRUDTests
             using (var connection = GetOpenConnection())
             {
                 var guid = new Guid("3a6fb33d-7141-47a0-b9fa-86a1a1945da9");
-                connection.Insert<Guid>(new GUIDTest { Name = "DeleteRecordWithGuidKey", Id = guid });
+                connection.Insert<Guid, GUIDTest>(new GUIDTest { Name = "DeleteRecordWithGuidKey", Id = guid });
                 var id = connection.GetList<GUIDTest>().First().Id;
                 connection.Delete<GUIDTest>(id);
                 connection.Get<GUIDTest>(id).IsNull();
             }
         }
 
+#if !NET40
         //async  tests
         public void TestMultiInsertASync()
         {
@@ -635,10 +734,10 @@ namespace Dapper.SimpleCRUDTests
         {
             using (var connection = GetOpenConnection())
             {
-                connection.InsertAsync<Guid>(new GUIDTest { Name = "MultiInsertWithGuidAsync" });
-                connection.InsertAsync<Guid>(new GUIDTest { Name = "MultiInsertWithGuidAsync" });
-                connection.InsertAsync<Guid>(new GUIDTest { Name = "MultiInsertWithGuidAsync" });
-                connection.InsertAsync<Guid>(new GUIDTest { Name = "MultiInsertWithGuidAsync" });
+                connection.InsertAsync<Guid, GUIDTest>(new GUIDTest { Name = "MultiInsertWithGuidAsync" });
+                connection.InsertAsync<Guid, GUIDTest>(new GUIDTest { Name = "MultiInsertWithGuidAsync" });
+                connection.InsertAsync<Guid, GUIDTest>(new GUIDTest { Name = "MultiInsertWithGuidAsync" });
+                connection.InsertAsync<Guid, GUIDTest>(new GUIDTest { Name = "MultiInsertWithGuidAsync" });
                 //tiny wait to let the inserts happen
                 System.Threading.Thread.Sleep(300);
                 var list = connection.GetList<GUIDTest>(new { Name = "MultiInsertWithGuidAsync" });
@@ -655,6 +754,19 @@ namespace Dapper.SimpleCRUDTests
                 var user = connection.GetAsync<User>(id);
                 user.Result.Name.IsEqualTo("TestSimpleGetAsync");
                 connection.Delete<User>(id);
+            }
+        }
+
+        public void TestMultipleKeyGetAsync()
+        {
+            using (var connection = GetOpenConnection())
+            {
+                var keyMaster = new KeyMaster { Key1 = 1, Key2 = 2 };
+                connection.Insert(keyMaster);
+                var result = connection.GetAsync<KeyMaster>(new { Key1 = 1, Key2 = 2 });
+                result.Result.Key1.IsEqualTo(1);
+                result.Result.Key2.IsEqualTo(2);
+                connection.Delete(keyMaster);
             }
         }
 
@@ -679,6 +791,19 @@ namespace Dapper.SimpleCRUDTests
                 connection.DeleteAsync(user);
                 connection.Get<User>(id).IsNull();
                 connection.Delete<User>(id);
+            }
+        }
+
+        public void TestDeleteByMultipleKeyObject()
+        {
+            using (var connection = GetOpenConnection())
+            {
+                var keyMaster = new KeyMaster { Key1 = 1, Key2 = 2 };
+                connection.Insert(keyMaster);
+                connection.Get<KeyMaster>(keyMaster);
+                connection.Delete<KeyMaster>(new { Key1 = 1, Key2 = 2 });
+                connection.Get<KeyMaster>(keyMaster).IsNull();
+                connection.Delete(keyMaster);
             }
         }
 
@@ -716,7 +841,7 @@ namespace Dapper.SimpleCRUDTests
                 connection.Insert(new User { Name = "TestFilteredGetListParametersAsync1", Age = 10 });
                 connection.Insert(new User { Name = "TestFilteredGetListParametersAsync2", Age = 10 });
                 connection.Insert(new User { Name = "TestFilteredGetListParametersAsync3", Age = 10 });
-                connection.Insert(new User { Name = "TestFilteredGetListParametersAsync4", Age = 11 });                
+                connection.Insert(new User { Name = "TestFilteredGetListParametersAsync4", Age = 11 });
                 string whereclause = "where Age = @Age";
                 if (SimpleCRUD.GetDialect() == "Oracle")
                     whereclause = "where Age = :Age";
@@ -772,6 +897,79 @@ namespace Dapper.SimpleCRUDTests
 
         }
 
+        public void TestInsertWithSpecifiedPrimaryKeyAsync()
+        {
+            using (var connection = GetOpenConnection())
+            {
+                var id = connection.InsertAsync(new UserWithoutAutoIdentity() { Id = 999, Name = "User999Async", Age = 10 });
+                id.Result.IsEqualTo(999);
+                var user = connection.GetAsync<UserWithoutAutoIdentity>(999);
+                user.Result.Name.IsEqualTo("User999Async");
+                connection.Execute("Delete from UserWithoutAutoIdentity");
+            }
+        }
+
+
+        public async void TestInsertWithMultiplePrimaryKeysAsync()
+        {
+            using (var connection = GetOpenConnection())
+            {
+                var keyMaster = new KeyMaster { Key1 = 1, Key2 = 2 };
+                await connection.InsertAsync(keyMaster);
+                var result = connection.GetAsync<KeyMaster>(new { Key1 = 1, Key2 = 2 });
+                result.Result.Key1.IsEqualTo(1);
+                result.Result.Key2.IsEqualTo(2);
+                connection.Execute("Delete from KeyMaster");
+            }
+        }
+        public void TestInsertUsingGenericLimitedFieldsAsync()
+        {
+            using (var connection = GetOpenConnection())
+            {
+                //arrange
+                var user = new User { Name = "User1", Age = 10, ScheduledDayOff = DayOfWeek.Friday };
+
+                //act
+                var idTask = connection.InsertAsync<int?, UserEditableSettings>(user);
+                idTask.Wait();
+                var id = idTask.Result;
+
+                //assert
+                var insertedUser = connection.Get<User>(id);
+                insertedUser.ScheduledDayOff.IsNull();
+
+                connection.Delete<User>(id);
+            }
+        }
+
+        /// <summary>
+        /// We expect scheduled day off to NOT be updated, since it's not a property of UserEditableSettings
+        /// </summary>
+        public void TestUpdateUsingGenericLimitedFieldsAsync()
+        {
+            using (var connection = GetOpenConnection())
+            {
+                //arrange
+                var user = new User { Name = "User1", Age = 10, ScheduledDayOff = DayOfWeek.Friday };
+                user.Id = connection.Insert(user) ?? 0;
+
+                user.ScheduledDayOff = DayOfWeek.Thursday;
+                var userAsEditableSettings = (UserEditableSettings)user;
+                userAsEditableSettings.Name = "User++";
+
+                connection.UpdateAsync(userAsEditableSettings).Wait();
+
+                //act
+                var insertedUser = connection.Get<User>(user.Id);
+
+                //assert
+                insertedUser.Name.IsEqualTo("User++");
+                insertedUser.ScheduledDayOff.IsEqualTo(DayOfWeek.Friday);
+
+                connection.Delete<User>(user.Id);
+            }
+        }
+#endif
         //column attribute tests
 
         public void TestInsertWithSpecifiedColumnName()
@@ -870,7 +1068,7 @@ namespace Dapper.SimpleCRUDTests
                 string whereclause = "where Age > @Age";
                 if (SimpleCRUD.GetDialect() == "Oracle")
                     whereclause = "where Age > :Age";
-                var resultlist = connection.GetListPaged<User>(1, 30, whereclause, null, new {Age = 14});
+                var resultlist = connection.GetListPaged<User>(1, 30, whereclause, null, new { Age = 14 });
                 resultlist.Count().IsEqualTo(15);
                 resultlist.First().Name.IsEqualTo("Person 15");
                 connection.Execute("Delete from Users");
@@ -946,7 +1144,7 @@ namespace Dapper.SimpleCRUDTests
                     x++;
                 } while (x < 10);
 
-                connection.DeleteList<User>(new {age = 9});
+                connection.DeleteList<User>(new { age = 9 });
                 var resultlist = connection.GetList<User>();
                 resultlist.Count().IsEqualTo(9);
                 connection.Execute("Delete from Users");
@@ -963,9 +1161,9 @@ namespace Dapper.SimpleCRUDTests
                     connection.Insert(new User { Name = "Person " + x, Age = x, CreatedDate = DateTime.Now, ScheduledDayOff = DayOfWeek.Thursday });
                     x++;
                 } while (x < 10);
-                string whereclause = "where Age > @Age";
+                string whereclause = "where Age >= @Age";
                 if (SimpleCRUD.GetDialect() == "Oracle")
-                    whereclause = "where Age > :Age";
+                    whereclause = "where Age >= :Age";
                 connection.DeleteList<User>(whereclause, new { Age = 9 });
                 var resultlist = connection.GetList<User>();
                 resultlist.Count().IsEqualTo(8);
@@ -1011,7 +1209,7 @@ namespace Dapper.SimpleCRUDTests
                 resultlist.Count().IsEqualTo(30);
                 connection.RecordCount<User>().IsEqualTo(30);
 
-                connection.RecordCount<User>(new { age = 10}).IsEqualTo(1);
+                connection.RecordCount<User>(new { age = 10 }).IsEqualTo(1);
 
 
                 connection.Execute("Delete from Users");
@@ -1052,20 +1250,6 @@ namespace Dapper.SimpleCRUDTests
             }
         }
 
-
-        public void TestInsertWithSpecifiedPrimaryKeyAsync()
-        {
-            using (var connection = GetOpenConnection())
-            {
-                var id = connection.InsertAsync(new UserWithoutAutoIdentity() { Id = 999, Name = "User999Async", Age = 10 });
-                id.Result.IsEqualTo(999);
-                var user = connection.GetAsync<UserWithoutAutoIdentity>(999);
-                user.Result.Name.IsEqualTo("User999Async");
-                connection.Execute("Delete from UserWithoutAutoIdentity");
-            }
-        }
-
-
         public void TestGetListNullableWhere()
         {
             using (var connection = GetOpenConnection())
@@ -1096,7 +1280,7 @@ namespace Dapper.SimpleCRUDTests
                 var itemId = connection.Insert(new IgnoreColumns() { IgnoreInsert = "OriginalInsert", IgnoreUpdate = "OriginalUpdate", IgnoreSelect = "OriginalSelect", IgnoreAll = "OriginalAll" });
                 var item = connection.Get<IgnoreColumns>(itemId);
                 //verify insert column was ignored
-                item.IgnoreInsert.IsNull(); 
+                item.IgnoreInsert.IsNull();
 
                 //verify select value wasn't selected 
                 item.IgnoreSelect.IsNull();
@@ -1105,13 +1289,13 @@ namespace Dapper.SimpleCRUDTests
                 string query = "Select * from IgnoreColumns where Id = @Id";
                 if (SimpleCRUD.GetDialect() == "Oracle")
                     query = "Select * from IgnoreColumns where Id = :id";
-                var fromDapper = connection.Query<IgnoreColumns>(query, new{id = itemId}).First();
+                var fromDapper = connection.Query<IgnoreColumns>(query, new { id = itemId }).First();
                 fromDapper.IgnoreSelect.IsEqualTo("OriginalSelect");
-               
+
                 //change value and update
                 item.IgnoreUpdate = "ChangedUpdate";
                 connection.Update(item);
-                
+
                 //verify that update didn't take effect
                 item = connection.Get<IgnoreColumns>(itemId);
                 item.IgnoreUpdate.IsEqualTo("OriginalUpdate");
